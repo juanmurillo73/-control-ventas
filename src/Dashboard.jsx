@@ -30,9 +30,14 @@ export default function Dashboard({ session, onLogout }) {
   const [meta, setMeta] = useState(0);
   const [metaInput, setMetaInput] = useState('0');
   const [cotizaciones, setCotizaciones] = useState(0);
+  const [cotizacionesInput, setCotizacionesInput] = useState('0');
   const [ventas, setVentas] = useState([]);
   const [showForm, setShowForm] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [errorMsg, setErrorMsg] = useState('');
+  const [okMsg, setOkMsg] = useState('');
+
+  const flashOk = (msg) => { setOkMsg(msg); setErrorMsg(''); setTimeout(() => setOkMsg(''), 2000); };
   const [form, setForm] = useState({ nombre:'', acv:'', origen: ORIGENES[0], probabilidad:'Media', fecha:'', seguimiento:'', factura:'', notas:'' });
 
   const loadMonthsList = useCallback(async () => {
@@ -44,19 +49,23 @@ export default function Dashboard({ session, onLogout }) {
   }, [userId]);
 
   const ensureMonthRow = useCallback(async (k) => {
-    await supabase.from('metas').upsert({ user_id: userId, mes: k, meta: 0, cotizaciones: 0 }, { onConflict: 'user_id,mes', ignoreDuplicates: true });
+    const { error } = await supabase.from('metas').upsert({ user_id: userId, mes: k, meta: 0, cotizaciones: 0 }, { onConflict: 'user_id,mes', ignoreDuplicates: true });
+    if (error) setErrorMsg(error.message);
   }, [userId]);
 
   const loadMonth = useCallback(async (k) => {
-    const { data: metaRow } = await supabase.from('metas').select('*').eq('user_id', userId).eq('mes', k).maybeSingle();
+    const { data: metaRow, error: metaErr } = await supabase.from('metas').select('*').eq('user_id', userId).eq('mes', k).maybeSingle();
+    if (metaErr) setErrorMsg(metaErr.message);
     if (metaRow) {
       setMeta(metaRow.meta || 0);
       setMetaInput(String(metaRow.meta || 0));
       setCotizaciones(metaRow.cotizaciones || 0);
+      setCotizacionesInput(String(metaRow.cotizaciones || 0));
     } else {
-      setMeta(0); setMetaInput('0'); setCotizaciones(0);
+      setMeta(0); setMetaInput('0'); setCotizaciones(0); setCotizacionesInput('0');
     }
-    const { data: ventasData } = await supabase.from('ventas').select('*').eq('user_id', userId).eq('mes', k).order('created_at', { ascending: false });
+    const { data: ventasData, error: ventasErr } = await supabase.from('ventas').select('*').eq('user_id', userId).eq('mes', k).order('created_at', { ascending: false });
+    if (ventasErr) setErrorMsg(ventasErr.message);
     setVentas(ventasData || []);
   }, [userId]);
 
@@ -77,16 +86,19 @@ export default function Dashboard({ session, onLogout }) {
     const val = parseFloat(metaInput.replace(/[^0-9.]/g,'')) || 0;
     setMeta(val);
     setSaving(true);
-    await supabase.from('metas').upsert({ user_id: userId, mes: month, meta: val, cotizaciones }, { onConflict: 'user_id,mes' });
+    const { error } = await supabase.from('metas').upsert({ user_id: userId, mes: month, meta: val, cotizaciones }, { onConflict: 'user_id,mes' });
     setSaving(false);
+    if (error) setErrorMsg(error.message); else flashOk('Meta guardada');
   };
 
-  const saveCotizaciones = async (val) => {
-    const num = parseInt(val,10) || 0;
+  const saveCotizaciones = async () => {
+    const num = parseInt(cotizacionesInput,10) || 0;
     setCotizaciones(num);
+    setCotizacionesInput(String(num));
     setSaving(true);
-    await supabase.from('metas').upsert({ user_id: userId, mes: month, meta, cotizaciones: num }, { onConflict: 'user_id,mes' });
+    const { error } = await supabase.from('metas').upsert({ user_id: userId, mes: month, meta, cotizaciones: num }, { onConflict: 'user_id,mes' });
     setSaving(false);
+    if (error) setErrorMsg(error.message); else flashOk('Cotizaciones guardadas');
   };
 
   const addVenta = async () => {
@@ -98,8 +110,10 @@ export default function Dashboard({ session, onLogout }) {
       probabilidad: form.probabilidad, fecha: form.fecha || null, seguimiento: form.seguimiento,
       factura: form.factura, notas: form.notas,
     }).select();
-    if (!error && data) setVentas(v => [data[0], ...v]);
     setSaving(false);
+    if (error) { setErrorMsg(error.message); return; }
+    if (data) setVentas(v => [data[0], ...v]);
+    flashOk('Venta guardada');
     setForm({ nombre:'', acv:'', origen: ORIGENES[0], probabilidad:'Media', fecha:'', seguimiento:'', factura:'', notas:'' });
     setShowForm(false);
   };
@@ -110,6 +124,7 @@ export default function Dashboard({ session, onLogout }) {
   };
 
   const createNewMonth = async () => {
+    setErrorMsg('');
     const [y,m] = month.split('-').map(Number);
     let ny = y, nm = m+1;
     if (nm > 12) { nm = 1; ny += 1; }
@@ -117,6 +132,7 @@ export default function Dashboard({ session, onLogout }) {
     await ensureMonthRow(nextKey);
     await loadMonthsList();
     setMonth(nextKey);
+    flashOk(`${monthLabel(nextKey)} creado`);
   };
 
   const vendido = useMemo(() => ventas.reduce((s,v) => s + (Number(v.acv)||0), 0), [ventas]);
@@ -184,8 +200,11 @@ export default function Dashboard({ session, onLogout }) {
             <Target size={14} color="var(--text-secondary)" />
             <span style={{ fontSize:13, color:'var(--text-secondary)' }}>Meta del mes</span>
           </div>
-          <input value={metaInput} onChange={e=>setMetaInput(e.target.value)} onBlur={saveMeta}
-            style={{ fontSize:22, fontWeight:600, border:'none', background:'transparent', padding:0, width:'100%' }} />
+          <div style={{ display:'flex', alignItems:'center', gap:6 }}>
+            <input value={metaInput} onChange={e=>setMetaInput(e.target.value)}
+              style={{ fontSize:22, fontWeight:600, border:'none', background:'transparent', padding:0, width:'100%' }} />
+            <button onClick={saveMeta} style={{ fontSize:11, padding:'4px 8px', flexShrink:0 }}>Guardar</button>
+          </div>
         </div>
         <div style={{ background:'var(--surface-1)', borderRadius:10, padding:'1rem' }}>
           <div style={{ display:'flex', alignItems:'center', gap:6, marginBottom:4 }}>
@@ -200,13 +219,25 @@ export default function Dashboard({ session, onLogout }) {
             <span style={{ fontSize:13, color:'var(--text-secondary)' }}>Efectividad</span>
           </div>
           <p style={{ fontSize:22, fontWeight:600, margin:0 }}>{efectividad}%</p>
-          <div style={{ display:'flex', alignItems:'center', gap:6, marginTop:6 }}>
+          <p style={{ fontSize:10, color:'var(--text-muted)', margin:'2px 0 6px' }}>{nVentas} ventas ÷ {cotizaciones} cotizaciones</p>
+          <div style={{ display:'flex', alignItems:'center', gap:6 }}>
             <span style={{ fontSize:11, color:'var(--text-muted)' }}>Cotizaciones:</span>
-            <input type="number" value={cotizaciones} onChange={e=>saveCotizaciones(e.target.value)}
+            <input type="number" value={cotizacionesInput} onChange={e=>setCotizacionesInput(e.target.value)}
               style={{ width:50, fontSize:12, padding:'2px 6px' }} />
+            <button onClick={saveCotizaciones} style={{ fontSize:11, padding:'4px 8px' }}>Guardar</button>
           </div>
         </div>
       </div>
+
+      {(errorMsg || okMsg) && (
+        <div style={{
+          background: errorMsg ? '#FBE4E1' : 'var(--success-bg)',
+          color: errorMsg ? 'var(--danger)' : 'var(--success)',
+          borderRadius: 8, padding: '8px 12px', fontSize: 13, marginBottom: '1rem'
+        }}>
+          {errorMsg || okMsg}
+        </div>
+      )}
 
       <div style={{ marginBottom:'1.5rem' }}>
         <div style={{ display:'flex', justifyContent:'space-between', marginBottom:8 }}>
