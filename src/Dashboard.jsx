@@ -4,7 +4,7 @@ import { TrendingUp, Target, ShoppingBag, Percent, Plus, Trash2, Trophy, Chevron
 import { supabase } from './supabaseClient.js';
 
 const MESES = ['Enero','Febrero','Marzo','Abril','Mayo','Junio','Julio','Agosto','Septiembre','Octubre','Noviembre','Diciembre'];
-const ORIGENES = ['WhatsApp','Referido','Publicidad','Evento','Email','LinkedIn','Think e'];
+const ORIGENES = ['In/Out','Referido Empresario','Referido Partner','Interno - Base de Clientes Propia'];
 const PROBABILIDADES = ['Baja','Media','Alta'];
 const PROB_COLOR = { Baja: '#A32D2D', Media: '#854F0B', Alta: '#0F6E56' };
 const PIE_COLORS = ['#0F6E56','#185FA5','#854F0B','#993556','#534AB7','#712B13','#3B6D11'];
