@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Cell, PieChart, Pie, Legend } from 'recharts';
-import { TrendingUp, Target, ShoppingBag, Percent, Plus, Trash2, Trophy, ChevronDown, X, LogOut } from 'lucide-react';
+import { TrendingUp, Target, ShoppingBag, Percent, Plus, Trash2, Trophy, ChevronDown, X, LogOut, Pencil } from 'lucide-react';
 import { supabase } from './supabaseClient.js';
 
 const MESES = ['Enero','Febrero','Marzo','Abril','Mayo','Junio','Julio','Agosto','Septiembre','Octubre','Noviembre','Diciembre'];
@@ -33,6 +33,8 @@ export default function Dashboard({ session, onLogout }) {
   const [cotizacionesInput, setCotizacionesInput] = useState('0');
   const [ventas, setVentas] = useState([]);
   const [showForm, setShowForm] = useState(false);
+  const [selectedVenta, setSelectedVenta] = useState(null);
+  const [editForm, setEditForm] = useState(null);
   const [saving, setSaving] = useState(false);
   const [errorMsg, setErrorMsg] = useState('');
   const [okMsg, setOkMsg] = useState('');
@@ -116,6 +118,38 @@ export default function Dashboard({ session, onLogout }) {
     flashOk('Venta guardada');
     setForm({ nombre:'', acv:'', origen: ORIGENES[0], probabilidad:'Media', fecha:'', seguimiento:'', factura:'', notas:'' });
     setShowForm(false);
+  };
+
+  const openVenta = (v) => {
+    setSelectedVenta(v);
+    setEditForm({
+      nombre: v.nombre || '', acv: String(v.acv || ''), origen: v.origen || ORIGENES[0],
+      probabilidad: v.probabilidad || 'Media', fecha: v.fecha || '',
+      seguimiento: v.seguimiento || '', factura: v.factura || '', notas: v.notas || '',
+    });
+  };
+
+  const closeVenta = () => { setSelectedVenta(null); setEditForm(null); };
+
+  const saveEditVenta = async () => {
+    if (!selectedVenta || !editForm) return;
+    setSaving(true);
+    const acvNum = parseFloat(String(editForm.acv).replace(/[^0-9.]/g,'')) || 0;
+    const { data, error } = await supabase.from('ventas').update({
+      nombre: editForm.nombre, acv: acvNum, origen: editForm.origen, probabilidad: editForm.probabilidad,
+      fecha: editForm.fecha || null, seguimiento: editForm.seguimiento, factura: editForm.factura, notas: editForm.notas,
+    }).eq('id', selectedVenta.id).eq('user_id', userId).select();
+    setSaving(false);
+    if (error) { setErrorMsg(error.message); return; }
+    if (data && data[0]) setVentas(vs => vs.map(x => x.id === selectedVenta.id ? data[0] : x));
+    flashOk('Venta actualizada');
+    closeVenta();
+  };
+
+  const deleteFromModal = async () => {
+    if (!selectedVenta) return;
+    await deleteVenta(selectedVenta.id);
+    closeVenta();
   };
 
   const deleteVenta = async (id) => {
@@ -321,7 +355,7 @@ export default function Dashboard({ session, onLogout }) {
       ) : (
         <div style={{ display:'flex', flexDirection:'column', gap:8 }}>
           {ventas.map(v => (
-            <div key={v.id} style={{ background:'var(--surface-1)', borderRadius:10, padding:'0.75rem 1rem', display:'flex', justifyContent:'space-between', alignItems:'center', gap:12 }}>
+            <div key={v.id} onClick={() => openVenta(v)} style={{ cursor:'pointer', background:'var(--surface-1)', borderRadius:10, padding:'0.75rem 1rem', display:'flex', justifyContent:'space-between', alignItems:'center', gap:12 }}>
               <div style={{ minWidth:0 }}>
                 <p style={{ fontSize:14, fontWeight:600, margin:0 }}>{v.nombre}</p>
                 <p style={{ fontSize:12, color:'var(--text-secondary)', margin:'2px 0 0' }}>
@@ -331,12 +365,71 @@ export default function Dashboard({ session, onLogout }) {
               </div>
               <div style={{ display:'flex', alignItems:'center', gap:14, flexShrink:0 }}>
                 <span style={{ fontSize:15, fontWeight:600 }}>{fmtCOP(v.acv)}</span>
-                <button onClick={() => deleteVenta(v.id)} aria-label="Eliminar venta" style={{ padding:6 }}>
+                <Pencil size={14} color="var(--text-muted)" />
+                <button onClick={(e) => { e.stopPropagation(); deleteVenta(v.id); }} aria-label="Eliminar venta" style={{ padding:6 }}>
                   <Trash2 size={14} color="var(--danger)" />
                 </button>
               </div>
             </div>
           ))}
+        </div>
+      )}
+
+      {selectedVenta && editForm && (
+        <div onClick={closeVenta} style={{ position:'fixed', inset:0, background:'rgba(0,0,0,0.4)', display:'flex', alignItems:'center', justifyContent:'center', padding:'1rem', zIndex:100 }}>
+          <div onClick={(e) => e.stopPropagation()} style={{ background:'var(--surface-2)', borderRadius:12, padding:'1.5rem', maxWidth:480, width:'100%', maxHeight:'85vh', overflowY:'auto' }}>
+            <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:'1rem' }}>
+              <p style={{ fontSize:17, fontWeight:600, margin:0 }}>Detalle de la venta</p>
+              <button onClick={closeVenta} aria-label="Cerrar" style={{ padding:6 }}><X size={16} /></button>
+            </div>
+            <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:10 }}>
+              <label style={{ gridColumn:'1 / -1', fontSize:12, color:'var(--text-secondary)' }}>
+                Nombre del cliente
+                <input value={editForm.nombre} onChange={e=>setEditForm(f=>({...f,nombre:e.target.value}))} style={{ width:'100%', marginTop:4 }} />
+              </label>
+              <label style={{ fontSize:12, color:'var(--text-secondary)' }}>
+                ACV
+                <input value={editForm.acv} onChange={e=>setEditForm(f=>({...f,acv:e.target.value}))} style={{ width:'100%', marginTop:4 }} />
+              </label>
+              <label style={{ fontSize:12, color:'var(--text-secondary)' }}>
+                Fecha
+                <input type="date" value={editForm.fecha} onChange={e=>setEditForm(f=>({...f,fecha:e.target.value}))} style={{ width:'100%', marginTop:4 }} />
+              </label>
+              <label style={{ fontSize:12, color:'var(--text-secondary)' }}>
+                Origen
+                <select value={editForm.origen} onChange={e=>setEditForm(f=>({...f,origen:e.target.value}))} style={{ width:'100%', marginTop:4 }}>
+                  {ORIGENES.map(o => <option key={o} value={o}>{o}</option>)}
+                </select>
+              </label>
+              <label style={{ fontSize:12, color:'var(--text-secondary)' }}>
+                Probabilidad de recompra
+                <select value={editForm.probabilidad} onChange={e=>setEditForm(f=>({...f,probabilidad:e.target.value}))} style={{ width:'100%', marginTop:4 }}>
+                  {PROBABILIDADES.map(p => <option key={p} value={p}>{p}</option>)}
+                </select>
+              </label>
+              <label style={{ fontSize:12, color:'var(--text-secondary)' }}>
+                N° seguimiento comercial
+                <input value={editForm.seguimiento} onChange={e=>setEditForm(f=>({...f,seguimiento:e.target.value}))} style={{ width:'100%', marginTop:4 }} />
+              </label>
+              <label style={{ fontSize:12, color:'var(--text-secondary)' }}>
+                N° factura comercial
+                <input value={editForm.factura} onChange={e=>setEditForm(f=>({...f,factura:e.target.value}))} style={{ width:'100%', marginTop:4 }} />
+              </label>
+              <label style={{ gridColumn:'1 / -1', fontSize:12, color:'var(--text-secondary)' }}>
+                Notas
+                <textarea value={editForm.notas} onChange={e=>setEditForm(f=>({...f,notas:e.target.value}))} rows={3} style={{ width:'100%', marginTop:4, fontFamily:'inherit', fontSize:14, padding:8, borderRadius:8, border:'1px solid var(--border)' }} />
+              </label>
+            </div>
+            <div style={{ display:'flex', justifyContent:'space-between', marginTop:'1.25rem' }}>
+              <button onClick={deleteFromModal} style={{ color:'var(--danger)', display:'flex', alignItems:'center', gap:6 }}>
+                <Trash2 size={14} /> Eliminar
+              </button>
+              <div style={{ display:'flex', gap:8 }}>
+                <button onClick={closeVenta}>Cancelar</button>
+                <button onClick={saveEditVenta} style={{ background:'var(--accent-bg)', color:'var(--accent)', fontWeight:600 }}>Guardar cambios</button>
+              </div>
+            </div>
+          </div>
         </div>
       )}
 
