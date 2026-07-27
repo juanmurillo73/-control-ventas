@@ -2,6 +2,7 @@ import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Cell, PieChart, Pie, Legend } from 'recharts';
 import { TrendingUp, Target, ShoppingBag, Percent, Plus, Trash2, Trophy, ChevronDown, X, LogOut, Pencil } from 'lucide-react';
 import { supabase } from './supabaseClient.js';
+import { getPagoYAcelerador, getAceleradorTabla, TABLA_ADICIONES, TABLA_UPGRADES } from './comisionTables.js';
 
 const MESES = ['Enero','Febrero','Marzo','Abril','Mayo','Junio','Julio','Agosto','Septiembre','Octubre','Noviembre','Diciembre'];
 const ORIGENES = ['In/Out','Referido Empresario','Referido Partner','Interno - Base de Clientes Propia'];
@@ -31,6 +32,12 @@ export default function Dashboard({ session, onLogout }) {
   const [metaInput, setMetaInput] = useState('0');
   const [cotizaciones, setCotizaciones] = useState(0);
   const [cotizacionesInput, setCotizacionesInput] = useState('0');
+  const [adiciones, setAdiciones] = useState(0);
+  const [adicionesInput, setAdicionesInput] = useState('0');
+  const [upgrades, setUpgrades] = useState(0);
+  const [upgradesInput, setUpgradesInput] = useState('0');
+  const [comisionRecibida, setComisionRecibida] = useState(0);
+  const [comisionRecibidaInput, setComisionRecibidaInput] = useState('0');
   const [ventas, setVentas] = useState([]);
   const [showForm, setShowForm] = useState(false);
   const [selectedVenta, setSelectedVenta] = useState(null);
@@ -63,8 +70,16 @@ export default function Dashboard({ session, onLogout }) {
       setMetaInput(String(metaRow.meta || 0));
       setCotizaciones(metaRow.cotizaciones || 0);
       setCotizacionesInput(String(metaRow.cotizaciones || 0));
+      setAdiciones(metaRow.adiciones_nomina || 0);
+      setAdicionesInput(String(metaRow.adiciones_nomina || 0));
+      setUpgrades(metaRow.upgrades || 0);
+      setUpgradesInput(String(metaRow.upgrades || 0));
+      setComisionRecibida(metaRow.comision_recibida || 0);
+      setComisionRecibidaInput(String(metaRow.comision_recibida || 0));
     } else {
       setMeta(0); setMetaInput('0'); setCotizaciones(0); setCotizacionesInput('0');
+      setAdiciones(0); setAdicionesInput('0'); setUpgrades(0); setUpgradesInput('0');
+      setComisionRecibida(0); setComisionRecibidaInput('0');
     }
     const { data: ventasData, error: ventasErr } = await supabase.from('ventas').select('*').eq('user_id', userId).eq('mes', k).order('created_at', { ascending: false });
     if (ventasErr) setErrorMsg(ventasErr.message);
@@ -101,6 +116,22 @@ export default function Dashboard({ session, onLogout }) {
     const { error } = await supabase.from('metas').upsert({ user_id: userId, mes: month, meta, cotizaciones: num }, { onConflict: 'user_id,mes' });
     setSaving(false);
     if (error) setErrorMsg(error.message); else flashOk('Cotizaciones guardadas');
+  };
+
+  const saveComision = async () => {
+    const adicionesNum = parseInt(adicionesInput,10) || 0;
+    const upgradesNum = parseInt(upgradesInput,10) || 0;
+    const comisionRecibidaNum = parseFloat(comisionRecibidaInput.replace(/[^0-9.]/g,'')) || 0;
+    setAdiciones(adicionesNum); setAdicionesInput(String(adicionesNum));
+    setUpgrades(upgradesNum); setUpgradesInput(String(upgradesNum));
+    setComisionRecibida(comisionRecibidaNum); setComisionRecibidaInput(String(comisionRecibidaNum));
+    setSaving(true);
+    const { error } = await supabase.from('metas').upsert({
+      user_id: userId, mes: month, meta, cotizaciones,
+      adiciones_nomina: adicionesNum, upgrades: upgradesNum, comision_recibida: comisionRecibidaNum,
+    }, { onConflict: 'user_id,mes' });
+    setSaving(false);
+    if (error) setErrorMsg(error.message); else flashOk('Datos de comisión guardados');
   };
 
   const addVenta = async () => {
@@ -179,6 +210,16 @@ export default function Dashboard({ session, onLogout }) {
   const sobrecumplido = vendido > meta && meta > 0;
   const sobrecumplimientoPct = sobrecumplido ? Math.round(((vendido-meta)/meta)*100) : 0;
   const efectividad = cotizaciones > 0 ? Math.round((nVentas/cotizaciones)*100) : 0;
+
+  const { pago: pagoPct, acelerador: acelSobrecumpPct } = useMemo(() => getPagoYAcelerador(cumplimiento), [cumplimiento]);
+  const acelAdicionesPct = useMemo(() => getAceleradorTabla(TABLA_ADICIONES, adiciones, cumplimiento), [adiciones, cumplimiento]);
+  const acelUpgradesPct = useMemo(() => getAceleradorTabla(TABLA_UPGRADES, upgrades, cumplimiento), [upgrades, cumplimiento]);
+  const comisionBase = vendido * (pagoPct/100);
+  const bonoSobrecump = comisionBase * (acelSobrecumpPct/100);
+  const bonoAdiciones = comisionBase * (acelAdicionesPct/100);
+  const bonoUpgrades = comisionBase * (acelUpgradesPct/100);
+  const comisionTotalCalculada = comisionBase + bonoSobrecump + bonoAdiciones + bonoUpgrades;
+  const diffComision = comisionRecibida - comisionTotalCalculada;
 
   const origenData = useMemo(() => {
     const map = {};
@@ -331,6 +372,58 @@ export default function Dashboard({ session, onLogout }) {
             </div>
           </div>
         )}
+      </div>
+
+      <div style={{ marginBottom:'2rem' }}>
+        <p style={{ fontSize:16, fontWeight:600, margin:'0 0 0.75rem' }}>💰 Comisión estimada del mes</p>
+
+        <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fit, minmax(160px, 1fr))', gap:10, marginBottom:12 }}>
+          <label style={{ fontSize:12, color:'var(--text-secondary)' }}>
+            Adiciones de Nómina
+            <input type="number" value={adicionesInput} onChange={e=>setAdicionesInput(e.target.value)} style={{ width:'100%', marginTop:4 }} />
+          </label>
+          <label style={{ fontSize:12, color:'var(--text-secondary)' }}>
+            Upgrades
+            <input type="number" value={upgradesInput} onChange={e=>setUpgradesInput(e.target.value)} style={{ width:'100%', marginTop:4 }} />
+          </label>
+          <label style={{ fontSize:12, color:'var(--text-secondary)' }}>
+            Comisión recibida (real)
+            <input value={comisionRecibidaInput} onChange={e=>setComisionRecibidaInput(e.target.value)} style={{ width:'100%', marginTop:4 }} />
+          </label>
+          <button onClick={saveComision} style={{ alignSelf:'end', background:'var(--accent-bg)', color:'var(--accent)', fontWeight:600 }}>Guardar</button>
+        </div>
+
+        <div style={{ background:'var(--surface-1)', borderRadius:10, padding:'1rem', display:'flex', flexDirection:'column', gap:6 }}>
+          <div style={{ display:'flex', justifyContent:'space-between', fontSize:13 }}>
+            <span style={{ color:'var(--text-secondary)' }}>Comisión base ({pagoPct}% de {fmtCOP(vendido)})</span>
+            <span>{fmtCOP(comisionBase)}</span>
+          </div>
+          <div style={{ display:'flex', justifyContent:'space-between', fontSize:13 }}>
+            <span style={{ color:'var(--text-secondary)' }}>+ Acelerador sobrecumplimiento ({acelSobrecumpPct}%)</span>
+            <span>{fmtCOP(bonoSobrecump)}</span>
+          </div>
+          <div style={{ display:'flex', justifyContent:'space-between', fontSize:13 }}>
+            <span style={{ color:'var(--text-secondary)' }}>+ Acelerador adiciones de nómina ({acelAdicionesPct}%)</span>
+            <span>{fmtCOP(bonoAdiciones)}</span>
+          </div>
+          <div style={{ display:'flex', justifyContent:'space-between', fontSize:13 }}>
+            <span style={{ color:'var(--text-secondary)' }}>+ Acelerador upgrades ({acelUpgradesPct}%)</span>
+            <span>{fmtCOP(bonoUpgrades)}</span>
+          </div>
+          <div style={{ height:1, background:'var(--border)', margin:'4px 0' }} />
+          <div style={{ display:'flex', justifyContent:'space-between', fontSize:15, fontWeight:600 }}>
+            <span>Comisión total calculada</span>
+            <span>{fmtCOP(comisionTotalCalculada)}</span>
+          </div>
+          <div style={{ display:'flex', justifyContent:'space-between', fontSize:13, marginTop:6 }}>
+            <span style={{ color:'var(--text-secondary)' }}>Comisión recibida (real)</span>
+            <span>{fmtCOP(comisionRecibida)}</span>
+          </div>
+          <div style={{ display:'flex', justifyContent:'space-between', fontSize:13, fontWeight:600, color: diffComision === 0 ? 'var(--text-secondary)' : (diffComision > 0 ? 'var(--success)' : 'var(--danger)') }}>
+            <span>Diferencia</span>
+            <span>{diffComision >= 0 ? '+' : ''}{fmtCOP(diffComision)}</span>
+          </div>
+        </div>
       </div>
 
       <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:'0.75rem' }}>
