@@ -40,7 +40,7 @@ export default function Dashboard({ session, onLogout }) {
   const [okMsg, setOkMsg] = useState('');
 
   const flashOk = (msg) => { setOkMsg(msg); setErrorMsg(''); setTimeout(() => setOkMsg(''), 2000); };
-  const [form, setForm] = useState({ nombre:'', acv:'', origen: ORIGENES[0], probabilidad:'Media', fecha:'', seguimiento:'', factura:'', notas:'' });
+  const [form, setForm] = useState({ nombre:'', acv:'', valorFacturado:'', origen: ORIGENES[0], probabilidad:'Media', fecha:'', seguimiento:'', factura:'', notas:'' });
 
   const loadMonthsList = useCallback(async () => {
     const { data } = await supabase.from('metas').select('mes').eq('user_id', userId).order('mes', { ascending: false });
@@ -107,8 +107,9 @@ export default function Dashboard({ session, onLogout }) {
     if (!form.nombre.trim() || !form.acv) return;
     setSaving(true);
     const acvNum = parseFloat(form.acv.replace(/[^0-9.]/g,'')) || 0;
+    const facturadoNum = parseFloat(String(form.valorFacturado).replace(/[^0-9.]/g,'')) || 0;
     const { data, error } = await supabase.from('ventas').insert({
-      user_id: userId, mes: month, nombre: form.nombre, acv: acvNum, origen: form.origen,
+      user_id: userId, mes: month, nombre: form.nombre, acv: acvNum, valor_facturado: facturadoNum, origen: form.origen,
       probabilidad: form.probabilidad, fecha: form.fecha || null, seguimiento: form.seguimiento,
       factura: form.factura, notas: form.notas,
     }).select();
@@ -116,14 +117,14 @@ export default function Dashboard({ session, onLogout }) {
     if (error) { setErrorMsg(error.message); return; }
     if (data) setVentas(v => [data[0], ...v]);
     flashOk('Venta guardada');
-    setForm({ nombre:'', acv:'', origen: ORIGENES[0], probabilidad:'Media', fecha:'', seguimiento:'', factura:'', notas:'' });
+    setForm({ nombre:'', acv:'', valorFacturado:'', origen: ORIGENES[0], probabilidad:'Media', fecha:'', seguimiento:'', factura:'', notas:'' });
     setShowForm(false);
   };
 
   const openVenta = (v) => {
     setSelectedVenta(v);
     setEditForm({
-      nombre: v.nombre || '', acv: String(v.acv || ''), origen: v.origen || ORIGENES[0],
+      nombre: v.nombre || '', acv: String(v.acv || ''), valorFacturado: String(v.valor_facturado || ''), origen: v.origen || ORIGENES[0],
       probabilidad: v.probabilidad || 'Media', fecha: v.fecha || '',
       seguimiento: v.seguimiento || '', factura: v.factura || '', notas: v.notas || '',
     });
@@ -135,8 +136,9 @@ export default function Dashboard({ session, onLogout }) {
     if (!selectedVenta || !editForm) return;
     setSaving(true);
     const acvNum = parseFloat(String(editForm.acv).replace(/[^0-9.]/g,'')) || 0;
+    const facturadoNum = parseFloat(String(editForm.valorFacturado).replace(/[^0-9.]/g,'')) || 0;
     const { data, error } = await supabase.from('ventas').update({
-      nombre: editForm.nombre, acv: acvNum, origen: editForm.origen, probabilidad: editForm.probabilidad,
+      nombre: editForm.nombre, acv: acvNum, valor_facturado: facturadoNum, origen: editForm.origen, probabilidad: editForm.probabilidad,
       fecha: editForm.fecha || null, seguimiento: editForm.seguimiento, factura: editForm.factura, notas: editForm.notas,
     }).eq('id', selectedVenta.id).eq('user_id', userId).select();
     setSaving(false);
@@ -170,6 +172,7 @@ export default function Dashboard({ session, onLogout }) {
   };
 
   const vendido = useMemo(() => ventas.reduce((s,v) => s + (Number(v.acv)||0), 0), [ventas]);
+  const totalFacturado = useMemo(() => ventas.reduce((s,v) => s + (Number(v.valor_facturado)||0), 0), [ventas]);
   const nVentas = ventas.length;
   const cumplimiento = meta > 0 ? Math.round((vendido/meta)*100) : 0;
   const falta = Math.max(0, meta - vendido);
@@ -291,6 +294,11 @@ export default function Dashboard({ session, onLogout }) {
         )}
       </div>
 
+      <div style={{ background:'var(--surface-1)', borderRadius:10, padding:'0.85rem 1rem', display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:'1.5rem' }}>
+        <span style={{ fontSize:13, color:'var(--text-secondary)' }}>Valor facturado (informativo, no afecta la meta)</span>
+        <span style={{ fontSize:17, fontWeight:600 }}>{fmtCOP(totalFacturado)}</span>
+      </div>
+
       <div style={{ display:'grid', gridTemplateColumns: origenData.length ? '1fr 1fr' : '1fr', gap:16, marginBottom:'2rem' }}>
         <div>
           <p style={{ fontSize:13, color:'var(--text-secondary)', margin:'0 0 8px' }}>Vendido vs meta</p>
@@ -336,6 +344,7 @@ export default function Dashboard({ session, onLogout }) {
         <div style={{ background:'var(--surface-1)', borderRadius:10, padding:'1rem', marginBottom:'1rem', display:'grid', gridTemplateColumns:'1fr 1fr', gap:10 }}>
           <input placeholder="Nombre del cliente" value={form.nombre} onChange={e=>setForm(f=>({...f,nombre:e.target.value}))} />
           <input placeholder="ACV (valor de la venta)" value={form.acv} onChange={e=>setForm(f=>({...f,acv:e.target.value}))} />
+          <input placeholder="Valor facturado (informativo)" value={form.valorFacturado} onChange={e=>setForm(f=>({...f,valorFacturado:e.target.value}))} />
           <select value={form.origen} onChange={e=>setForm(f=>({...f,origen:e.target.value}))}>
             {ORIGENES.map(o => <option key={o} value={o}>{o}</option>)}
           </select>
@@ -390,6 +399,10 @@ export default function Dashboard({ session, onLogout }) {
               <label style={{ fontSize:12, color:'var(--text-secondary)' }}>
                 ACV
                 <input value={editForm.acv} onChange={e=>setEditForm(f=>({...f,acv:e.target.value}))} style={{ width:'100%', marginTop:4 }} />
+              </label>
+              <label style={{ fontSize:12, color:'var(--text-secondary)' }}>
+                Valor facturado (informativo)
+                <input value={editForm.valorFacturado} onChange={e=>setEditForm(f=>({...f,valorFacturado:e.target.value}))} style={{ width:'100%', marginTop:4 }} />
               </label>
               <label style={{ fontSize:12, color:'var(--text-secondary)' }}>
                 Fecha
