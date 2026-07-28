@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Cell, PieChart, Pie, Legend } from 'recharts';
-import { TrendingUp, Target, ShoppingBag, Percent, Plus, Trash2, Trophy, ChevronDown, X, LogOut, Pencil } from 'lucide-react';
+import { TrendingUp, Target, ShoppingBag, Percent, Plus, Trash2, Trophy, ChevronDown, X, LogOut, Pencil, Download, Upload } from 'lucide-react';
+import * as XLSX from 'xlsx';
 import { supabase } from './supabaseClient.js';
 import { getPagoYAcelerador, getAceleradorTabla, TABLA_ADICIONES, TABLA_UPGRADES } from './comisionTables.js';
 
@@ -42,6 +43,9 @@ export default function Dashboard({ session, onLogout }) {
   const [showForm, setShowForm] = useState(false);
   const [selectedVenta, setSelectedVenta] = useState(null);
   const [editForm, setEditForm] = useState(null);
+  const [importing, setImporting] = useState(false);
+  const [importSummary, setImportSummary] = useState('');
+  const fileInputRef = React.useRef(null);
   const [saving, setSaving] = useState(false);
   const [errorMsg, setErrorMsg] = useState('');
   const [okMsg, setOkMsg] = useState('');
@@ -132,6 +136,99 @@ export default function Dashboard({ session, onLogout }) {
     }, { onConflict: 'user_id,mes' });
     setSaving(false);
     if (error) setErrorMsg(error.message); else flashOk('Datos de comisión guardados');
+  };
+
+  const TEMPLATE_HEADERS = ['Nombre','ACV','Valor Facturado','Origen','Probabilidad de Recompra','Fecha (AAAA-MM-DD)','N Seguimiento Comercial','N Factura Comercial','Notas'];
+
+  const downloadTemplate = () => {
+    const wb = XLSX.utils.book_new();
+    const wsData = [
+      TEMPLATE_HEADERS,
+      ['Empresa Ejemplo SAS', 1500000, 1785000, ORIGENES[0], 'Media', '2026-07-15', 'SEG-001', 'FAC-001', 'Ejemplo de nota'],
+    ];
+    const ws = XLSX.utils.aoa_to_sheet(wsData);
+    ws['!cols'] = TEMPLATE_HEADERS.map(() => ({ wch: 22 }));
+    XLSX.utils.book_append_sheet(wb, ws, 'Ventas');
+
+    const wsAyuda = XLSX.utils.aoa_to_sheet([
+      ['Valores válidos para "Origen"'], ...ORIGENES.map(o => [o]),
+      [''],
+      ['Valores válidos para "Probabilidad de Recompra"'], ...PROBABILIDADES.map(p => [p]),
+    ]);
+    wsAyuda['!cols'] = [{ wch: 40 }];
+    XLSX.utils.book_append_sheet(wb, wsAyuda, 'Valores válidos');
+
+    XLSX.writeFile(wb, 'plantilla-ventas.xlsx');
+  };
+
+  const parseFechaCelda = (val) => {
+    if (!val) return null;
+    if (val instanceof Date) return val.toISOString().slice(0,10);
+    if (typeof val === 'number') {
+      const d = new Date(Math.round((val - 25569) * 86400 * 1000));
+      return isNaN(d) ? null : d.toISOString().slice(0,10);
+    }
+    const s = String(val).trim();
+    return s || null;
+  };
+
+  const parseNumeroCelda = (val) => {
+    if (typeof val === 'number') return val;
+    return parseFloat(String(val || '').replace(/[^0-9.]/g,'')) || 0;
+  };
+
+  const handleImportFile = async (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setImporting(true);
+    setImportSummary('');
+    setErrorMsg('');
+    try {
+      const buffer = await file.arrayBuffer();
+      const wb = XLSX.read(buffer, { type: 'array', cellDates: true });
+      const sheet = wb.Sheets[wb.SheetNames[0]];
+      const rows = XLSX.utils.sheet_to_json(sheet, { defval: '' });
+
+      const paraInsertar = [];
+      let omitidas = 0;
+      for (const row of rows) {
+        const nombre = String(row['Nombre'] || '').trim();
+        const acvRaw = row['ACV'];
+        if (!nombre || !acvRaw) { omitidas++; continue; }
+        const origenVal = String(row['Origen'] || '').trim();
+        const probVal = String(row['Probabilidad de Recompra'] || '').trim();
+        paraInsertar.push({
+          user_id: userId,
+          mes: month,
+          nombre,
+          acv: parseNumeroCelda(acvRaw),
+          valor_facturado: parseNumeroCelda(row['Valor Facturado']),
+          origen: ORIGENES.includes(origenVal) ? origenVal : ORIGENES[0],
+          probabilidad: PROBABILIDADES.includes(probVal) ? probVal : 'Media',
+          fecha: parseFechaCelda(row['Fecha (AAAA-MM-DD)'] || row['Fecha']),
+          seguimiento: String(row['N Seguimiento Comercial'] || ''),
+          factura: String(row['N Factura Comercial'] || ''),
+          notas: String(row['Notas'] || ''),
+        });
+      }
+
+      if (paraInsertar.length === 0) {
+        setErrorMsg('No se encontraron filas válidas en el archivo (revisa que tengan al menos Nombre y ACV).');
+        setImporting(false);
+        e.target.value = '';
+        return;
+      }
+
+      const { data, error } = await supabase.from('ventas').insert(paraInsertar).select();
+      if (error) { setErrorMsg(error.message); setImporting(false); e.target.value = ''; return; }
+      setVentas(v => [...(data || []), ...v]);
+      setImportSummary(`Se importaron ${data.length} ventas${omitidas ? ` (se omitieron ${omitidas} filas sin Nombre o ACV)` : ''}.`);
+      flashOk(`${data.length} ventas importadas`);
+    } catch (err) {
+      setErrorMsg('No se pudo leer el archivo. Verifica que sea un .xlsx válido basado en la plantilla.');
+    }
+    setImporting(false);
+    e.target.value = '';
   };
 
   const addVenta = async () => {
@@ -426,12 +523,25 @@ export default function Dashboard({ session, onLogout }) {
         </div>
       </div>
 
-      <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:'0.75rem' }}>
+      <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:'0.75rem', flexWrap:'wrap', gap:8 }}>
         <p style={{ fontSize:16, fontWeight:600, margin:0 }}>Ventas del mes</p>
-        <button onClick={() => setShowForm(s=>!s)} style={{ display:'flex', alignItems:'center', gap:6 }}>
-          {showForm ? <X size={14} /> : <Plus size={14} />} {showForm ? 'Cancelar' : 'Nueva venta'}
-        </button>
+        <div style={{ display:'flex', gap:8, flexWrap:'wrap' }}>
+          <button onClick={downloadTemplate} style={{ display:'flex', alignItems:'center', gap:6 }}>
+            <Download size={14} /> Plantilla Excel
+          </button>
+          <button onClick={() => fileInputRef.current?.click()} disabled={importing} style={{ display:'flex', alignItems:'center', gap:6 }}>
+            <Upload size={14} /> {importing ? 'Importando...' : 'Importar Excel'}
+          </button>
+          <input ref={fileInputRef} type="file" accept=".xlsx,.xls" onChange={handleImportFile} style={{ display:'none' }} />
+          <button onClick={() => setShowForm(s=>!s)} style={{ display:'flex', alignItems:'center', gap:6 }}>
+            {showForm ? <X size={14} /> : <Plus size={14} />} {showForm ? 'Cancelar' : 'Nueva venta'}
+          </button>
+        </div>
       </div>
+
+      {importSummary && (
+        <p style={{ fontSize:12, color:'var(--text-secondary)', marginTop:-6, marginBottom:10 }}>{importSummary}</p>
+      )}
 
       {showForm && (
         <div style={{ background:'var(--surface-1)', borderRadius:10, padding:'1rem', marginBottom:'1rem', display:'grid', gridTemplateColumns:'1fr 1fr', gap:10 }}>
